@@ -185,7 +185,7 @@ class Client(object):
         if r.ok:
             return r.json()
         else:
-            return None
+            return r.raise_for_status()
 
     def _get_depositions_by_id(self, dep_id=None):
         """gets the deposition based on project id
@@ -206,7 +206,7 @@ class Client(object):
         if r.ok:
             return r.json()
         else:
-            return None
+            return r.raise_for_status()
 
     def _get_depositions_files(self):
         """gets the file deposition
@@ -223,7 +223,7 @@ class Client(object):
         if r.ok:
             return r.json()
         else:
-            return None
+            return r.raise_for_status()
 
     def _get_bucket_by_title(self, title=None):
         """gets the bucket URL by project title
@@ -246,7 +246,7 @@ class Client(object):
         if r.ok:
             return r.json()['links']['bucket']
         else:
-            return None
+            return r.raise_for_status()
 
     def _get_bucket_by_id(self, dep_id=None):
         """gets the bucket URL by project deposition ID
@@ -266,7 +266,7 @@ class Client(object):
         if r.ok:
             return r.json()['links']['bucket']
         else:
-            return None
+            return r.raise_for_status()
 
     def _get_api(self):
         # get request, returns our response
@@ -275,7 +275,7 @@ class Client(object):
         if r.ok:
             return r.json()
         else:
-            return None
+            return r.raise_for_status()
 
     # ---------------------------------------------
     # user facing functions/properties
@@ -410,7 +410,8 @@ class Client(object):
                         title=None,
                         upload_type=None,
                         description=None,
-                        ):
+                        creator=None,
+                        **kwargs):
         """change projects metadata
 
         ** warning **
@@ -425,6 +426,7 @@ class Client(object):
             title (str): new title of project
             upload_type (str): new upload type
             description (str): new description
+            **kwargs: dictionary to update default metadata
 
         Returns:
             dict: dictionary with new metadata
@@ -434,14 +436,20 @@ class Client(object):
 
         if description is None:
             description = "description goes here"
+        
+        if creator is None:
+            creator = "creator goes here"
 
         data = {
             "metadata": {
                 "title": f"{title}",
                 "upload_type": f"{upload_type}",
                 "description": f"{description}",
+                "creators": [{"name": f"{creator}"}]
             }
         }
+        # update metadata with a new metadata dictionary
+        data.update(kwargs)        
 
         r = requests.put(f"{self._endpoint}/deposit/depositions/{dep_id}",
                          auth=self._bearer_auth,
@@ -451,14 +459,13 @@ class Client(object):
         if r.ok:
             return r.json()
         else:
-            return None
+            return r.raise_for_status()
 
-    def upload_file(self, file_path=None, publish=False):
+    def upload_file(self, file_path=None):
         """upload a file to a project
 
         Args:
             file_path (str): name of the file to upload
-            publish (bool): whether implemente publish action or not
         """
         if file_path is None:
             print("You need to supply a path")
@@ -480,11 +487,9 @@ class Client(object):
                                  data=fp,)
 
                 print(f"{file_path} successfully uploaded!") if r.ok else print("Oh no! something went wrong")
-            
-            if publish:
-                return self.publish()
 
-    def upload_zip(self, source_dir=None, output_file=None, publish=False):
+
+    def upload_zip(self, source_dir=None, output_file=None):
         """upload a directory to a project as zip
 
         This will: 
@@ -496,7 +501,6 @@ class Client(object):
             source_dir (str): path to directory to tar
             output_file (str): name of output file (optional)
                 defaults to using the source_dir name as output_file
-            publish (bool): whether implemente publish action or not, argument for `upload_file`
         """
         # make sure source directory exists
         source_dir = os.path.expanduser(source_dir)
@@ -537,12 +541,12 @@ class Client(object):
                 make_zipfile(source_dir, zipf)
 
         # upload the file
-        self.upload_file(file_path=output_file, publish=publish)
+        self.upload_file(file_path=output_file)
 
         # remove tar file after uploading it
         os.remove(output_file)
 
-    def upload_tar(self, source_dir=None, output_file=None, publish=False):
+    def upload_tar(self, source_dir=None, output_file=None):
         """upload a directory to a project
 
         This will: 
@@ -554,7 +558,6 @@ class Client(object):
             source_dir (str): path to directory to tar
             output_file (str): name of output file (optional)
                 defaults to using the source_dir name as output_file
-            publish (bool): whether implemente publish action or not, argument for `upload_file`
         """
         # output_file = './tmp/tarTest.tar.gz'
         # source_dir = '/Users/gloege/test'
@@ -596,46 +599,11 @@ class Client(object):
             make_tarfile(output_file=output_file, source_dir=source_dir)
 
         # upload the file
-        self.upload_file(file_path=output_file, publish=publish)
+        self.upload_file(file_path=output_file)
 
         # remove tar file after uploading it
         os.remove(output_file)
 
-    def update(self, source=None, output_file=None, publish=False):
-        """update an existed record
-
-        Args:
-            source (str): path to directory or file to upload
-            output_file (str): name of output file (optional)
-                defaults to using the source_dir name as output_file
-            publish (bool): whether implemente publish action or not, argument for `upload_file`
-        """
-        # create a draft deposition
-        url_action = self._get_depositions_by_id(self.deposition_id)['links']['newversion']
-        r = requests.post(url_action, auth=self._bearer_auth)
-        r.raise_for_status()
-
-        # parse current project to the draft deposition
-        new_dep_id = r.json()['links']['latest_draft'].split('/')[-1]
-        self.set_project(new_dep_id)
-
-        # invoke upload funcions
-        if not source:
-            print("You need to supply a path")
-        
-        if Path(source).exists():
-            if Path(source).is_file():
-                self.upload_file(source, publish=publish)
-            elif Path(source).is_dir():
-                if not output_file:
-                    self.upload_zip(source, publish=publish)
-                elif '.zip' in ''.join(Path(output_file).suffixes).lower():
-                    self.upload_zip(source, output_file, publish=publish)
-                elif '.tar.gz' in ''.join(Path(output_file).suffixes).lower():
-                    self.upload_tar(source, output_file, publish=publish)
-        else:
-            raise FileNotFoundError(f"{source_dir} does not exist")
-        
     def publish(self):
         """ publish a record
         """
